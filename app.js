@@ -32,6 +32,12 @@ const canvas = $('gameCanvas');
 const ctx = canvas.getContext('2d');
 let doc = makeDoc(), selectedId = null, selectedDice = 'normal', zoom=1, cloudDB=null, cloudAuth=null, stateRef=null, authorized=!CLOUD, firebaseUser=null;
 let pendingRequests={}, cloudRequestsRef=null, masterListRef=null, ownerLoggedIn=false, channel=null, anims = {}, toastTimer;
+// PiP 描画改善: 非表示タブでは requestAnimationFrame が停止するブラウザがある。
+// PiP 中に限り timer でも Canvas を更新する（OS がタブ自体を停止した場合の保証はない）。
+let boardAnimationId = null;
+let pipBackgroundTimer = null;
+const PIP_BACKGROUND_INTERVAL_MS = 250;
+
 let lastReceived=null;
 const savedViewerId = sessionStorageGet('stream-sugoroku-viewer-id');
 const localViewerId = savedViewerId || `viewer-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
@@ -81,7 +87,7 @@ function updateAnimations(previous,next){
     }
   }
 }
-function useDoc(next){if(!next)return;const old=doc?.game;doc=safeDocument(next);updateAnimations(old,doc.game);if(!doc.game.players.some(p=>p.id===selectedId))selectedId=doc.game.players[0]?.id||null;renderUI();}
+function useDoc(next){if(!next)return;const old=doc?.game;doc=safeDocument(next);updateAnimations(old,doc.game);if(!doc.game.players.some(p=>p.id===selectedId))selectedId=doc.game.players[0]?.id||null;renderUI();if(document.hidden && pipIsActive())paintBoardAndCapture();}
 function localWrite(next){localStorageSet(LOCAL_KEY,JSON.stringify(next));useDoc(next);channel?.postMessage({type:'state',doc:next});}
 function localStorageGet(key){try{return localStorage.getItem(key)}catch{return null;}}
 function localStorageSet(key,value){try{localStorage.setItem(key,value)}catch{}}
@@ -213,7 +219,41 @@ ctx.fillStyle='#95a8bf';ctx.font='13px system-ui';ctx.fillText('📍 マスを�
 const last=doc.game.lastRoll;if(last){ctx.textAlign='right';ctx.fillStyle='#a5f0d7';ctx.font='bold 15px system-ui';ctx.fillText(`🎲 ${last.name}：${last.face} マス`,1120,628);ctx.textAlign='left'}
 drawDiceSequence(Date.now());
 syncRollControls();
-requestAnimationFrame(drawBoard);
+}
+// 通常時は画面描画周期、PiPでブラウザが非表示の間は補助タイマーで更新。
+// canvas.captureStream で取得した映像のフレームを、対応ブラウザでは明示要求する。
+function pipIsActive(){
+  const video=$('pipVideo');
+  return document.pictureInPictureElement===video || video?.webkitPresentationMode==='picture-in-picture';
+}
+function paintBoardAndCapture(time=performance.now()){
+  drawBoard(time);
+  if(!pipIsActive())return;
+  const track=$('pipVideo')?.srcObject?.getVideoTracks?.()[0];
+  if(track && typeof track.requestFrame==='function'){
+    try{track.requestFrame();}catch(err){console.debug('PiP frame request:',err);}
+  }
+}
+function boardAnimationTick(time){
+  boardAnimationId=null;
+  if(document.hidden)return;
+  paintBoardAndCapture(time);
+  boardAnimationId=requestAnimationFrame(boardAnimationTick);
+}
+function scheduleBoardRendering(){
+  if(boardAnimationId!==null){cancelAnimationFrame(boardAnimationId);boardAnimationId=null;}
+  if(pipBackgroundTimer!==null){clearInterval(pipBackgroundTimer);pipBackgroundTimer=null;}
+  if(document.hidden){
+    if(pipIsActive()){
+      paintBoardAndCapture();
+      pipBackgroundTimer=setInterval(()=>{
+        if(pipIsActive())paintBoardAndCapture();
+      },PIP_BACKGROUND_INTERVAL_MS);
+    }
+  }else{
+    paintBoardAndCapture();
+    boardAnimationId=requestAnimationFrame(boardAnimationTick);
+  }
 }
 function showTileInspection(n){inspectedTile=n;const t=tileInfo(n);$('tileInspection').hidden=false;$('tileInspectionTitle').textContent=`${n}マス：${t.title||TILE_KIND_LABELS[t.kind]}`;$('tileInspectionDescription').textContent=t.description||'このマスに説明は登録されていません。';}
 function openTileFromCanvas(ev){const r=canvas.getBoundingClientRect(),x=(ev.clientX-r.left)*(WIDTH/r.width),y=(ev.clientY-r.top)*(HEIGHT/r.height),m=boardMetrics();let best=null,distance=Infinity;for(let i=1;i<=m.count;i++){const pos=positionXY(i),dx=Math.abs(x-pos.x),dy=Math.abs(y-pos.y),d=dx*dx+dy*dy;if(dx<=Math.max(m.tileW/2,12)+6&&dy<=Math.max(m.tileH/2,12)+6&&d<distance){best=i;distance=d;}}if(best!=null)showTileInspection(best);}
@@ -226,7 +266,14 @@ function closeBoardEditor(){if(boardDirty&&!confirm('保存していない盤面
 function updateBoardCount(){if(!boardDraft)return;const n=Number($('boardCountInput').value);if(!Number.isSafeInteger(n)||n<1||n>120){notice('マス数は1〜120の整数で指定してください');return;}boardDraft.count=n;boardDraft.cells=Object.fromEntries(Object.entries(boardDraft.cells).filter(([key])=>Number(key)<=n));editingTile=Math.min(n,editingTile);boardDirty=true;renderBoardEditorTiles();renderBoardEditorForm();notice(`仮のマス数を ${n} に変更しました。保存すると盤面へ反映されます。`);}
 async function saveBoardEditor(){if(!boardDraft)return;const requested=Number($('boardCountInput').value);if(!Number.isSafeInteger(requested)||requested<1||requested>120){notice('マス数は1〜120の整数で指定してください');return;}if(requested!==boardDraft.count){boardDraft.count=requested;boardDraft.cells=Object.fromEntries(Object.entries(boardDraft.cells).filter(([key])=>Number(key)<=requested));}const nextBoard=clone(boardDraft),oldCount=boardCount();if(nextBoard.count<oldCount&&doc.game.players.some(p=>p.pos>nextBoard.count)){if(!confirm('現在位置が新しいゴールを超える参加者がいます。新しいゴール位置へ補正して保存しますか？'))return;}const saved=await commit(g=>{g.board=clone(nextBoard);resetOvershootPlayers(g,nextBoard.count);addEvent(g,`✎ 盤面を編集（${nextBoard.count}マス）`);},`盤面を${nextBoard.count}マスに更新しました`);if(saved){boardDraft=null;boardDirty=false;$('boardEditorOverlay').hidden=true;}}
 function adjustZoom(delta){zoom=Math.max(.65,Math.min(2.5,Math.round((zoom+delta)*100)/100));canvas.style.width=`${zoom*100}%`;$('zoomLevel').textContent=Math.round(zoom*100)+'%';}
-function setupPip(){const video=$('pipVideo');if(typeof canvas.captureStream!=='function')return;try{video.srcObject=canvas.captureStream(15);video.play().catch(()=>{});}catch(e){console.info('PiP準備:',e)}}
+function setupPip(){
+  const video=$('pipVideo');
+  video.addEventListener('enterpictureinpicture',scheduleBoardRendering);
+  video.addEventListener('leavepictureinpicture',scheduleBoardRendering);
+  video.addEventListener('webkitpresentationmodechanged',scheduleBoardRendering);
+  if(typeof canvas.captureStream!=='function')return;
+  try{video.srcObject=canvas.captureStream(15);video.play().catch(()=>{});}catch(e){console.info('PiP準備:',e)}
+}
 async function openPiP(){const video=$('pipVideo');try{if(!video.srcObject){if(typeof canvas.captureStream!=='function')throw new Error('このブラウザではCanvasの映像化に未対応です');video.srcObject=canvas.captureStream(15);}await video.play();if(document.pictureInPictureElement){await document.exitPictureInPicture();return;}if(typeof video.requestPictureInPicture==='function'){await video.requestPictureInPicture();return;}if(typeof video.webkitSetPresentationMode==='function'&&typeof video.webkitSupportsPresentationMode==='function'&&video.webkitSupportsPresentationMode('picture-in-picture')){video.webkitSetPresentationMode('picture-in-picture');return;}throw new Error('この端末のブラウザはPiPに対応していません');}catch(e){console.warn(e);notice('小窓表示に失敗しました。端末・ブラウザ制限の可能性があります。');}}
 function bindEvents(){document.body.classList.toggle('viewer',role==='viewer');$('switchRole').textContent=role==='viewer'?'管理画面へ ↗':'観戦画面へ ↗';$('switchRole').href=role==='viewer'?'?role=admin':'?role=viewer';
 $('zoomIn').onclick=()=>adjustZoom(.2);$('zoomOut').onclick=()=>adjustZoom(-.2);$('pipBtn').onclick=openPiP;
@@ -429,5 +476,5 @@ cloudAuth.onAuthStateChanged(async user => {
   }
 });
 }catch(err){console.error(err);$('connection').textContent='⚠ 接続失敗';$('modeHint').textContent='Firebaseの設定を見直してください';notice('Firebase接続に失敗しました：'+err.message);if(role==='admin'){$('authModal').hidden=false;$('authError').textContent='Firebaseに接続できませんでした。設定をご確認ください。'}}}
-function start(){bindEvents();if(role==='viewer'){$('adminTools').hidden=true;$('viewerTools').hidden=false;}renderUI();setupPip();requestAnimationFrame(drawBoard);if(CLOUD)setupCloud();else setupLocal();}
+function start(){bindEvents();if(role==='viewer'){$('adminTools').hidden=true;$('viewerTools').hidden=false;}renderUI();setupPip();document.addEventListener('visibilitychange',scheduleBoardRendering);scheduleBoardRendering();if(CLOUD)setupCloud();else setupLocal();}
 start();
