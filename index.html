@@ -12,7 +12,7 @@
 <body>
   <div class="app" id="app">
     <header class="topbar">
-      <div class="brand"><span class="brandicon">🎲</span><div><b>STREAM SUGOROKU</b><small>配信参加型すごろく / TEST BUILD 06 / PLAYER RENAME</small></div></div>
+      <div class="brand"><span class="brandicon">🎲</span><div><b>STREAM SUGOROKU</b><small>配信参加型すごろく / TEST BUILD 06.2 / EMPTY START</small></div></div>
       <div class="topactions">
         <span class="connection" id="connection"><span class="statusdot"></span>ローカル試験</span>
         <button class="ghost" id="shareBtn" title="観戦ページのURLをコピー">🔗 <span class="optional">観戦URL</span></button>
@@ -90,7 +90,7 @@
               </div>
               <small class="renameHelp">ポイント・コマ位置・サイコロ履歴はそのまま引き継ぎます。名前変更は巻き戻し可能です。</small>
             </form>
-            <label for="setPosition">選択者の位置を修正（1〜60）</label><div class="inputrow"><input type="number" min="1" max="60" id="setPosition" value="1"><button class="ghost" id="fixPosition">修正</button></div><button class="dangerbutton" id="deletePlayerBtn" type="button">🗑 選択した参加者を削除</button><small class="deleteHelp">削除するとコマ・ポイント・個別履歴が消えます。直後であれば「巻き戻す」で復元できます。</small><button class="dangerbutton" id="resetBtn">テストデータを初期化</button></div></details>
+            <label for="setPosition">選択者の位置を修正（1〜60）</label><div class="inputrow"><input type="number" min="1" max="60" id="setPosition" value="1"><button class="ghost" id="fixPosition">修正</button></div><button class="dangerbutton" id="deletePlayerBtn" type="button">🗑 選択した参加者を削除</button><small class="deleteHelp">削除するとコマ・ポイント・個別履歴が消えます。直後であれば「巻き戻す」で復元できます。</small><button class="dangerbutton" id="clearPlayersBtn" type="button">🧹 参加者・進行履歴を消去（盤面は保持）</button><small class="deleteHelp">クラウドに保存されているAlice等も削除します。参加者0人に戻り、ポイントと巻き戻し履歴も消去されます。</small><button class="dangerbutton" id="resetBtn" type="button">ゲームを完全初期化（参加者0人）</button><small class="deleteHelp">盤面の編集内容も60マスの初期状態へ戻します。いずれも取り消せません。</small></div></details>
         </div>
         <div id="viewerTools" hidden>
           <div class="watchcard"><b>👁 観戦者モード</b><p>コマの移動やサイコロ結果を閲覧できます。プレイヤーを選ぶと詳細・通過履歴を表示します。</p></div>

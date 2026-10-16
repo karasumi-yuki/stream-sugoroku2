@@ -1,6 +1,6 @@
 'use strict';
-/* STREAM SUGOROKU test2 v6.1: Firebase Realtime Database compatibility fix.
- * Firebase can omit empty arrays in stored JSON. Normalize read data before any game operation.
+/* STREAM SUGOROKU test2 v6.2: start with no sample players.
+ * A previously saved Firebase room is NEVER silently overwritten or deleted.
  */
 const $ = id => document.getElementById(id);
 const role = new URLSearchParams(location.search).get('role') === 'viewer' ? 'viewer' : 'admin';
@@ -30,7 +30,7 @@ let boardDraft=null,editingTile=1,boardDirty=false,inspectedTile=null;
 
 const canvas = $('gameCanvas');
 const ctx = canvas.getContext('2d');
-let doc = makeDoc(), selectedId = 'p1', selectedDice = 'normal', zoom=1, cloudDB=null, cloudAuth=null, stateRef=null, authorized=!CLOUD, firebaseUser=null;
+let doc = makeDoc(), selectedId = null, selectedDice = 'normal', zoom=1, cloudDB=null, cloudAuth=null, stateRef=null, authorized=!CLOUD, firebaseUser=null;
 let pendingRequests={}, cloudRequestsRef=null, masterListRef=null, ownerLoggedIn=false, channel=null, anims = {}, toastTimer;
 let lastReceived=null;
 const savedViewerId = sessionStorageGet('stream-sugoroku-viewer-id');
@@ -40,7 +40,7 @@ function sessionStorageGet(key){try{return sessionStorage.getItem(key)}catch{ret
 function sessionStorageSet(key,val){try{sessionStorage.setItem(key,val)}catch{}}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function freshPlayer(id,name,color,pos=1,balance=0){return {id,name,color,pos,balance,totalGift:balance,spent:0,rolls:0,path:[pos],visited:[pos],rollHistory:[]};}
-function makeDoc(){return {game:{board:defaultBoard(),players:[freshPlayer('p1','Alice',COLORS[0],1,350),freshPlayer('p2','Bob',COLORS[1],1,500),freshPlayer('p3','Carol',COLORS[2],1,50)],turn:0,lastRoll:null,events:[{text:'テストルームを開始しました',time:new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}]},past:[],future:[]};}
+function makeDoc(){return {game:{board:defaultBoard(),players:[],turn:0,lastRoll:null,events:[]},past:[],future:[]};}
 function clone(x){return JSON.parse(JSON.stringify(x));}
 function notice(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3400);}
 function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});}
@@ -88,7 +88,7 @@ function localStorageSet(key,value){try{localStorage.setItem(key,value)}catch{}}
 async function commit(change,label){if(!canOperate())return false;let failure='';const updateFn=current=>{let next=safeDocument(current);next=clone(next);const before=clone(next.game);const result=change(next.game);if(result===false){failure='操作を実行できませんでした';return;};next.past=[...(next.past||[]),before].slice(-35);next.future=[];return next;};try{if(CLOUD){const result=await stateRef.transaction(updateFn,undefined,false);if(!result.committed){notice(failure||'操作が取り消されました');return false;}}else{const updated=updateFn(doc);if(!updated){notice(failure);return false;}localWrite(updated);}notice(label||'更新しました');return true;}catch(e){console.error(e);notice(`保存できませんでした：${e.message}`);return false;}}
 async function historyChange(direction){if(!canOperate())return;if(isRollActive(doc.game.lastRoll)){notice('演出終了後に操作するか、演出スキップを押してください');return;}const updateFn=raw=>{const next=clone(safeDocument(raw));const source=direction==='undo'?'past':'future',target=direction==='undo'?'future':'past';if(!next[source]?.length)return;next[target]=[...(next[target]||[]),clone(next.game)].slice(-35);next.game=next[source].pop();return next;};try{if(CLOUD){const r=await stateRef.transaction(updateFn,undefined,false);if(!r.committed){notice('これ以上戻せません');return;}}else{const next=updateFn(doc);if(!next){notice('これ以上戻せません');return;}localWrite(next);}notice(direction==='undo'?'直前の操作を巻き戻しました':'操作をやり直しました');}catch(e){notice('巻き戻しに失敗しました');console.error(e)}}
 function addPlayer(name,id){const tidy=name.trim().slice(0,20);if(!tidy)return Promise.resolve();return commit(g=>{if(g.players.some(p=>p.name===tidy || p.id===id)){return false;}g.players.push(freshPlayer(id||`p${Date.now()}${Math.floor(Math.random()*10000)}`,tidy,COLORS[g.players.length%COLORS.length]));addEvent(g,`👤 ${tidy} が参加しました`);},`${tidy} を追加しました`)}
-function renderPlayers(){const box=$('playerList');const query=$('searchPlayer').value.trim().toLowerCase();const players=doc.game.players.filter(p=>p.name.toLowerCase().includes(query));box.innerHTML=players.length?'':'<small class="empty">参加者が見つかりません</small>';for(const player of players){const p=document.createElement('button');p.type='button';p.className='player'+(selectedId===player.id?' selected':'');p.innerHTML=`<span class="avatar" style="background:${player.color}">${escapeHtml(player.name.slice(0,1))}</span><span class="playerbody"><b>${escapeHtml(player.name)}</b><small>${player.balance.toLocaleString()}pt / 🎲${player.rolls}回</small></span><span class="playerposition">${player.pos}マス ›</span>`;p.onclick=()=>{selectedId=player.id;renderUI();};box.appendChild(p);}}
+function renderPlayers(){const box=$('playerList');const query=$('searchPlayer').value.trim().toLowerCase();const players=doc.game.players.filter(p=>p.name.toLowerCase().includes(query));box.innerHTML=players.length?'':`<small class="empty">${doc.game.players.length?'該当する参加者がいません':'参加者はまだいません。マスターが追加するか、観戦者の参加申請を承認してください。'}</small>`;for(const player of players){const p=document.createElement('button');p.type='button';p.className='player'+(selectedId===player.id?' selected':'');p.innerHTML=`<span class="avatar" style="background:${player.color}">${escapeHtml(player.name.slice(0,1))}</span><span class="playerbody"><b>${escapeHtml(player.name)}</b><small>${player.balance.toLocaleString()}pt / 🎲${player.rolls}回</small></span><span class="playerposition">${player.pos}マス ›</span>`;p.onclick=()=>{selectedId=player.id;renderUI();};box.appendChild(p);}}
 function renderDiceVisualMode(){
   const enabled = diceVisualMode === 'animated';
   const animated = $('diceModeAnimated'), instant = $('diceModeInstant');
@@ -331,7 +331,31 @@ $('deletePlayerBtn').onclick=async()=>{
   },`${targetName} を削除しました`);
   if(success){selectedId=doc.game.players[0]?.id||null;renderUI();}
 };
-$('resetBtn').onclick=async()=>{if(!confirm('テストデータを初期化しますか？ 操作履歴も消去されます。'))return;if(!canOperate())return;const initial=makeDoc();try{if(CLOUD)await stateRef.set(initial);else localWrite(initial);selectedId='p1';renderUI();notice('テストデータを初期化しました')}catch(e){notice('初期化できませんでした：'+e.message)}};
+// 既にFirebaseに存在するAlice等は、コード更新だけでは消去されない。
+// 管理者の明示的な操作で既存データを消去する（巻き戻し履歴も消去）。
+async function startCleanGame(keepBoard){
+  if(!canOperate())return;
+  const explanation = keepBoard
+    ? '参加者・ポイント・進行履歴・巻き戻し履歴をすべて消去します。\n盤面のマス数とマス設定は残します。\nこの操作は巻き戻せません。実行しますか？'
+    : '参加者・ポイント・進行履歴・盤面編集・巻き戻し履歴をすべて初期化します。\n参加者0人、60マスの初期盤面になります。\nこの操作は巻き戻せません。実行しますか？';
+  if(!confirm(explanation))return;
+  const buildClean = current => {
+    const fresh=makeDoc();
+    if(keepBoard && current && current.game) fresh.game.board=clone(validBoard(safeDocument(current).game));
+    return fresh;
+  };
+  try {
+    if(CLOUD){
+      const result=await stateRef.transaction(buildClean,undefined,false);
+      if(!result.committed){notice('初期化は取り消されました');return;}
+    }else localWrite(buildClean(doc));
+    selectedId=null;
+    renderUI();
+    notice(keepBoard?'参加者0人で新しいゲームを開始しました（盤面は保持）':'参加者0人の初期状態に戻しました');
+  }catch(e){console.error(e);notice('初期化できませんでした：'+e.message);}
+}
+$('clearPlayersBtn').onclick=()=>startCleanGame(true);
+$('resetBtn').onclick=()=>startCleanGame(false);
 $('requestForm').onsubmit=async e=>{e.preventDefault();const name=$('requestName').value.trim().slice(0,20);if(!name)return;try{if(CLOUD){if(!firebaseUser)throw new Error('認証がまだ完了していません');await cloudDB.ref(`rooms/${ROOM}/requests/${firebaseUser.uid}`).set({name,time:Date.now()});}else{pendingRequests[localViewerId]={name,time:Date.now()};localStorageSet(REQUEST_KEY,JSON.stringify(pendingRequests));channel?.postMessage({type:'join-request',uid:localViewerId,name,time:Date.now()});renderRequests();}$('requestStatus').textContent='申請しました。管理者の承認をお待ちください。';notice('参加申請を送りました')}catch(err){notice('申請に失敗しました：'+err.message)}};
 $('authForm').onsubmit=async e=>{e.preventDefault();$('authError').textContent='';try{await cloudAuth.signInWithEmailAndPassword($('authEmail').value,$('authPassword').value)}catch(err){$('authError').textContent='ログインできませんでした。メールとパスワードを確認してください。'}};
 $('addMasterBtn').onclick=async()=>{
