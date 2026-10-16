@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101725">
+  <title>配信すごろく｜test2</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="firebase-config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand"><span class="brandicon">🎲</span><div><b>STREAM SUGOROKU</b><small>配信参加型すごろく / TEST BUILD 06 / PLAYER RENAME</small></div></div>
+      <div class="topactions">
+        <span class="connection" id="connection"><span class="statusdot"></span>ローカル試験</span>
+        <button class="ghost" id="shareBtn" title="観戦ページのURLをコピー">🔗 <span class="optional">観戦URL</span></button>
+        <a class="switchrole" id="switchRole" href="?role=viewer">観戦画面へ ↗</a>
+      </div>
+    </header>
+    <div class="layout">
+      <main class="mainarea">
+        <div class="boardheading">
+          <div><p class="eyebrow">GAME BOARD</p><h1>みんなですごろく <span class="livepill">● LIVE</span></h1><p class="subline" id="subline">プレイヤーのコマが同じ盤面上で動きます</p></div>
+          <div class="boardactions">
+            <button type="button" class="iconbutton boardEditLaunch" id="openBoardEditor" title="マスの数や内容を編集">✎ <span class="optional">盤面編集</span></button>
+            <button class="iconbutton" id="zoomOut" aria-label="縮小" title="縮小">−</button>
+            <span id="zoomLevel" class="zoomlevel">100%</span>
+            <button class="iconbutton" id="zoomIn" aria-label="拡大" title="拡大">＋</button>
+            <button class="iconbutton special" id="pipBtn" title="小窓表示を試す">▣ <span class="optional">小窓</span></button>
+          </div>
+        </div>
+        <div class="boardframe" id="boardFrame">
+          <div class="boardscroller" id="boardScroller"><canvas width="1200" height="670" id="gameCanvas" aria-label="すごろく盤面"></canvas></div>
+          <button class="skiproll" id="skipRollBtn" type="button" hidden>⏩ 演出をスキップ</button>
+          <div class="boardbottom"><span><span id="goalLabel">🏁 START → GOAL 60</span></span><span id="turnDisplay">TURN 0</span></div>
+        </div>
+        <section class="glass tileInspection" id="tileInspection" hidden>
+          <div class="tileInspectionTop"><strong id="tileInspectionTitle">マスの詳細</strong><button type="button" class="ghost" id="closeTileInspection">閉じる ×</button></div>
+          <p id="tileInspectionDescription"></p>
+        </section>
+        <div class="belowboard">
+          <div class="glass statcard"><span class="tiny">参加者</span><strong id="statPlayers">0</strong><span class="caption">PLAYERS</span></div>
+          <div class="glass statcard"><span class="tiny">サイコロ使用回数</span><strong id="statRolls">0</strong><span class="caption">TOTAL ROLLS</span></div>
+          <div class="glass statcard"><span class="tiny">直近の結果</span><strong id="statLastRoll">–</strong><span class="caption" id="statLastWho">NO RECENT ROLLS</span></div>
+        </div>
+        <section class="glass historyPanel"><div class="sectionhead"><h2>📜 ゲーム履歴</h2><small>新しい順に表示</small></div><div id="eventList" class="eventlist"></div></section>
+      </main>
+      <aside class="sidebar" id="sidebar">
+        <!-- 左側は参加者一覧のみ。PC・横向き端末ではこの領域を広く表示 -->
+        <div class="participantsColumn" id="participantsColumn">
+          <div class="sectionhead"><div><p class="eyebrow">PARTICIPANTS</p><h2>参加者一覧 <span class="count" id="playerCount">0</span></h2></div></div>
+          <div class="searchwrap"><input type="search" id="searchPlayer" placeholder="🔎 参加者を検索" aria-label="参加者を検索"></div>
+          <div class="participantlist" id="playerList" aria-label="参加者一覧"></div>
+          <p class="listhelp">参加者を選ぶと右側に操作を表示します。</p>
+        </div>
+        <!-- 右側に、選択した参加者のポイント・サイコロ操作を集約 -->
+        <div id="adminTools" class="adminTools">
+          <div class="adminPanelTitle"><span>⚙ 参加者の操作</span><small>選択中のプレイヤーを操作</small></div>
+          <form id="addPlayerForm" class="joinform"><label for="newName">参加者を追加</label><div class="inputrow"><input id="newName" maxlength="20" placeholder="名前を入力" required><button class="primary" type="submit">追加</button></div></form>
+          <div id="joinRequests" class="requests" hidden></div>
+          <div class="sectionhead selectedhead"><h2>⚙ 選択した参加者を操作</h2></div>
+          <div id="selectedInfo" class="selectedinfo"></div>
+          <form id="addPointForm"><label for="pointAmount">ギフトポイントの追加</label><div class="inputrow"><input type="number" id="pointAmount" min="1" max="1000000" step="1" value="100" required><span class="unit">pt</span><button class="primary" type="submit">追加</button></div></form>
+          <label for="diceType" class="sectionlabel">使用するサイコロ</label>
+          <div class="dicegrid" id="diceGrid">
+            <button type="button" class="diceoption active" data-dice="normal"><span>🎲 通常</span><b>100pt</b><small>1～6</small></button>
+            <button type="button" class="diceoption" data-dice="slow"><span>🐢 低速</span><b>200pt</b><small>1～3</small></button>
+            <button type="button" class="diceoption" data-dice="fast"><span>🚀 高速</span><b>200pt</b><small>5～6</small></button>
+            <button type="button" class="diceoption" data-dice="select"><span>✨ 指定</span><b>500pt</b><small>1～6から選ぶ</small></button>
+          </div>
+          <div id="selectRollRow" class="selectroll" hidden><label for="selectedFace">進むマス数</label><select id="selectedFace"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option></select></div>
+          <fieldset class="diceVisualMode" aria-label="サイコロの演出を選択">
+            <legend>サイコロ演出</legend>
+            <div class="diceVisualOptions">
+              <label class="diceVisualOption"><input type="radio" name="diceVisualMode" id="diceModeAnimated" value="animated" checked><span>🎬 アニメーションあり</span></label>
+              <label class="diceVisualOption"><input type="radio" name="diceVisualMode" id="diceModeInstant" value="instant"><span>⚡ 演出なし</span></label>
+            </div>
+            <p class="diceVisualHelp" id="diceModeHelp">🎬 回転→出目表示→コマが1マスずつ移動。途中でスキップできます。</p>
+          </fieldset>
+          <button class="rollbutton" id="rollBtn" type="button">🎲 サイコロを振る</button>
+          <div class="undoredo"><button class="ghost" id="undoBtn">↶ 巻き戻す</button><button class="ghost" id="redoBtn">↷ やり直す</button></div>
+          <details class="advanced" id="ownerTools" hidden><summary>🔑 マスター権限管理（オーナー専用）</summary><div class="advancedbody"><label for="masterUid">追加するマスターの Firebase Authentication UID</label><div class="inputrow"><input id="masterUid" maxlength="128" placeholder="UIDを入力"><button class="primary" id="addMasterBtn" type="button">許可</button></div><div id="masterList" class="eventlist"></div><small>マスターは自身のメールアドレスとパスワードでログインします。UIDとアカウントはFirebaseコンソールから用意してください。</small></div></details><details class="advanced"><summary>手動補正 / 管理機能</summary><div class="advancedbody">
+            <form id="renamePlayerForm" class="renamePlayerForm">
+              <label for="renamePlayerInput">選択した参加者の名前を変更</label>
+              <div class="inputrow">
+                <input type="text" id="renamePlayerInput" name="renamePlayerInput" maxlength="20" autocomplete="off" placeholder="新しい名前を入力" required>
+                <button type="submit" class="primary" id="renamePlayerBtn">変更</button>
+              </div>
+              <small class="renameHelp">ポイント・コマ位置・サイコロ履歴はそのまま引き継ぎます。名前変更は巻き戻し可能です。</small>
+            </form>
+            <label for="setPosition">選択者の位置を修正（1〜60）</label><div class="inputrow"><input type="number" min="1" max="60" id="setPosition" value="1"><button class="ghost" id="fixPosition">修正</button></div><button class="dangerbutton" id="deletePlayerBtn" type="button">🗑 選択した参加者を削除</button><small class="deleteHelp">削除するとコマ・ポイント・個別履歴が消えます。直後であれば「巻き戻す」で復元できます。</small><button class="dangerbutton" id="resetBtn">テストデータを初期化</button></div></details>
+        </div>
+        <div id="viewerTools" hidden>
+          <div class="watchcard"><b>👁 観戦者モード</b><p>コマの移動やサイコロ結果を閲覧できます。プレイヤーを選ぶと詳細・通過履歴を表示します。</p></div>
+          <form id="requestForm" class="joinform"><label for="requestName">参加申請（管理者の承認制）</label><div class="inputrow"><input id="requestName" maxlength="20" placeholder="表示名を入力" required><button class="primary" type="submit">申請</button></div><small id="requestStatus">管理者が承認すると参加できます</small></form>
+          <div id="viewerDetail" class="viewerDetail"></div>
+        </div>
+      </aside>
+    </div>
+    <footer class="footer">配信すごろく・テスト版 │ 実際のギフト購入・景品交換機能はありません │ <span id="modeHint">ローカル・ブラウザ同期</span></footer>
+  </div>
+  <div class="modalbackdrop" id="authModal" hidden><form id="authForm" class="authbox"><h2>🔒 管理者ログイン</h2><p>クラウド共有時は管理者アカウントのみ盤面を操作できます。</p><label>メール<input type="email" id="authEmail" autocomplete="username" required></label><label>パスワード<input type="password" id="authPassword" autocomplete="current-password" required></label><button class="primary" type="submit">ログイン</button><span id="authError"></span><a href="?role=viewer">観戦ページに移動</a></form></div>
+  <div class="modalbackdrop boardEditorOverlay" id="boardEditorOverlay" hidden>
+    <section class="boardEditorDialog" role="dialog" aria-modal="true" aria-labelledby="boardEditorTitle">
+      <div class="boardEditorHeader">
+        <div><p class="eyebrow">BOARD EDITOR</p><h2 id="boardEditorTitle">✎ すごろく盤面の編集</h2><small>マス数・マスの種類・名前・説明を変更できます</small></div>
+        <button class="ghost" type="button" id="closeBoardEditor" title="編集を閉じる">× 閉じる</button>
+      </div>
+      <div class="boardEditorCount">
+        <label for="boardCountInput">マスの総数</label>
+        <div class="inputrow"><input id="boardCountInput" type="number" min="1" max="120" step="1" value="60"><button class="ghost" type="button" id="applyBoardCount">マス数を反映</button></div>
+        <small>1〜120マス。減らした場合、超過するコマの位置はゴールへ補正されます。</small>
+      </div>
+      <div class="boardEditorBody">
+        <div class="boardCellListColumn">
+          <div class="boardEditorSubheading"><strong>マスを選択</strong><small>クリックして編集</small></div>
+          <div class="boardCellList" id="boardCellList"></div>
+        </div>
+        <div class="boardCellFormColumn">
+          <div class="boardEditorSubheading"><strong id="editingTileHeading">マス 1 を編集</strong><small>内容は小窓・通常画面に共通で表示</small></div>
+          <label for="tileKindInput">マスの種類</label>
+          <select id="tileKindInput">
+            <option value="normal">通常</option><option value="event">イベント</option><option value="bonus">ボーナス</option><option value="warning">注意・ペナルティ</option>
+          </select>
+          <label for="tileTitleInput">マスの名前（盤面上にも表示）</label>
+          <input id="tileTitleInput" maxlength="18" placeholder="例：早口言葉" />
+          <label for="tileDescInput">説明・イベント内容</label>
+          <textarea id="tileDescInput" maxlength="300" rows="6" placeholder="例：好きな食べ物を3つ答える。マスターがイベントを進行する。"></textarea>
+          <div class="editorSideActions"><button type="button" class="ghost" id="clearTileButton">このマスを通常に戻す</button><span id="tileDraftStatus">編集中</span></div>
+          <div class="boardEditorHelp">イベント内容は表示用です。ポイントやコマ位置を自動変更する効果は、このテスト版では付与しません。</div>
+        </div>
+      </div>
+      <div class="boardEditorFooter"><small id="boardEditorSummary">変更内容は保存時に反映されます</small><div class="inputrow"><button type="button" class="ghost" id="cancelBoardEditor">キャンセル</button><button type="button" class="primary" id="saveBoardEditor">盤面を保存する</button></div></div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <video id="pipVideo" muted playsinline autoplay></video>
+</body>
+</html>
