@@ -1,5 +1,7 @@
 'use strict';
-/* STREAM SUGOROKU test2 v6: player rename + synchronized dice & movement animation; no real monetary transaction handling. */
+/* STREAM SUGOROKU test2 v6.1: Firebase Realtime Database compatibility fix.
+ * Firebase can omit empty arrays in stored JSON. Normalize read data before any game operation.
+ */
 const $ = id => document.getElementById(id);
 const role = new URLSearchParams(location.search).get('role') === 'viewer' ? 'viewer' : 'admin';
 const CLOUD = !!window.SUGOROKU_FIREBASE_CONFIG;
@@ -21,7 +23,7 @@ const DEFAULT_EVENT_CELLS = [8,16,24,33,43,51];
 const TILE_KIND_LABELS = {normal:'通常',event:'イベント',bonus:'ボーナス',warning:'注意・ペナルティ'};
 const TILE_KIND_COLORS = {normal:'#203349',event:'#4c3c65',bonus:'#235747',warning:'#624231'};
 function defaultBoard(){return {count:60,cells:Object.fromEntries(DEFAULT_EVENT_CELLS.map(n=>[n.toString(),{kind:'event',title:'イベント',description:''}]))};}
-function validBoard(g){const raw=g?.board;const n=Number(raw?.count);return {count:Number.isInteger(n)&&n>=1&&n<=120?n:60,cells:raw?.cells && typeof raw.cells==='object'?raw.cells:defaultBoard().cells};}
+function validBoard(g){const raw=g?.board;const n=Number(raw?.count);return {count:Number.isInteger(n)&&n>=1&&n<=120?n:60,cells:raw && typeof raw==='object' ? (raw.cells && typeof raw.cells==='object' && !Array.isArray(raw.cells) ? raw.cells : {}) : defaultBoard().cells};}
 function boardCount(g=doc.game){return validBoard(g).count;}
 function tileInfo(n,g=doc.game){const b=validBoard(g),t=b.cells?.[String(n)]||{};return {kind:TILE_KIND_LABELS[t.kind]?t.kind:'normal',title:String(t.title||'').slice(0,18),description:String(t.description||'').slice(0,300)};}
 let boardDraft=null,editingTile=1,boardDirty=false,inspectedTile=null;
@@ -45,7 +47,27 @@ function now(){return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minu
 function addEvent(g,text){g.events.unshift({text,time:now()});g.events=g.events.slice(0,60);}
 function getSelected(){return doc.game.players.find(p=>p.id===selectedId) || doc.game.players[0] || null;}
 function canOperate(){if(role!=='admin'){notice('観戦画面から盤面は操作できません');return false;}if(!authorized){notice('管理者ログインが必要です');return false;}return true;}
-function safeDocument(candidate){return candidate && candidate.game && Array.isArray(candidate.game.players) ? candidate : makeDoc();}
+function safeDocument(candidate){
+  // Firebase Realtime Database では空配列が保存後に省略されることがある。
+  // プレイヤーのサイコロ履歴、全員削除後の players、巻き戻し履歴を必ず配列へ復元する。
+  // 既存のゲーム状態がある場合は初期サンプルデータに戻さず、その状態を維持する。
+  const state = candidate && candidate.game && typeof candidate.game === 'object'
+    ? clone(candidate) : makeDoc();
+  const g = state.game;
+  if(!Array.isArray(g.players))g.players=[];
+  if(!Array.isArray(g.events))g.events=[];
+  if(!Array.isArray(state.past))state.past=[];
+  if(!Array.isArray(state.future))state.future=[];
+  if(!g.board || typeof g.board!=='object')g.board=defaultBoard();
+  if(!g.board.cells || typeof g.board.cells!=='object' || Array.isArray(g.board.cells))g.board.cells={};
+  for(const p of g.players){
+    if(!Number.isInteger(p.pos))p.pos=1;
+    if(!Array.isArray(p.path) || !p.path.length)p.path=[p.pos];
+    if(!Array.isArray(p.visited) || !p.visited.length)p.visited=p.path.slice();
+    if(!Array.isArray(p.rollHistory))p.rollHistory=[];
+  }
+  return state;
+}
 function updateAnimations(previous,next){
   if(!previous||!next)return;
   const rollChanged = next.lastRoll?.id && next.lastRoll.id !== previous.lastRoll?.id;
