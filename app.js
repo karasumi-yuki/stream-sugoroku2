@@ -274,7 +274,80 @@ function setupPip(){
   if(typeof canvas.captureStream!=='function')return;
   try{video.srcObject=canvas.captureStream(15);video.play().catch(()=>{});}catch(e){console.info('PiP準備:',e)}
 }
-async function openPiP(){const video=$('pipVideo');try{if(!video.srcObject){if(typeof canvas.captureStream!=='function')throw new Error('このブラウザではCanvasの映像化に未対応です');video.srcObject=canvas.captureStream(15);}await video.play();if(document.pictureInPictureElement){await document.exitPictureInPicture();return;}if(typeof video.requestPictureInPicture==='function'){await video.requestPictureInPicture();return;}if(typeof video.webkitSetPresentationMode==='function'&&typeof video.webkitSupportsPresentationMode==='function'&&video.webkitSupportsPresentationMode('picture-in-picture')){video.webkitSetPresentationMode('picture-in-picture');return;}throw new Error('この端末のブラウザはPiPに対応していません');}catch(e){console.warn(e);notice('小窓表示に失敗しました。端末・ブラウザ制限の可能性があります。');}}
+// PiPが失敗した際は原因を保存し、観戦者がスクリーンショットで報告できるようにする。
+// 重要: PiP開始の要求を video.play() の await より先に呼ぶ。
+// requestPictureInPicture() はボタン操作による一時的なユーザー権限が必要なため。
+function showPipDiagnostic(message){
+  let node=$('pipDiagnostic');
+  if(!node){
+    node=document.createElement('div');
+    node.id='pipDiagnostic';
+    node.setAttribute('role','status');
+    node.style.cssText='margin:8px 0 12px;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;background:#332638;border:1px solid #af5f75;border-radius:10px;color:#ffe1e8;font-size:12px;line-height:1.6;';
+    const anchor=document.querySelector('.boardheading');
+    if(anchor)anchor.insertAdjacentElement('afterend',node);
+    else document.body.appendChild(node);
+  }
+  node.textContent=message;
+  node.hidden=!message;
+}
+function pipErrorAdvice(error){
+  const name=String(error?.name||'Error');
+  const message=String(error?.message||'詳細情報なし');
+  const advice={
+    NotAllowedError:'ブラウザの許可、またはボタン操作直後の権限が不足している可能性があります。',
+    InvalidStateError:'動画がまだ再生準備できていない可能性があります。少し待って再度お試しください。',
+    NotSupportedError:'この端末・ブラウザでは、この形式の小窓に対応していない可能性があります。',
+    SecurityError:'ブラウザのセキュリティ設定等によって小窓が禁止されている可能性があります。',
+    AbortError:'小窓切り替えが中断されました。ページを読み直して再度お試しください。'
+  }[name]||'原因を特定するには、下記の詳細エラーが必要です。';
+  return `小窓表示に失敗：${name}\n${advice}\n詳細：${message}`;
+}
+async function openPiP(){
+  const video=$('pipVideo');
+  showPipDiagnostic('');
+  try{
+    if(document.pictureInPictureElement===video){
+      await document.exitPictureInPicture();
+      return;
+    }
+    if(!video.srcObject){
+      if(typeof canvas.captureStream!=='function')throw new Error('このブラウザではCanvasの映像化に未対応です');
+      video.srcObject=canvas.captureStream(15);
+    }
+    // 動画の再生を先に要求するが、ここではawaitしない（ユーザー操作の権限を失わないため）。
+    // 一部端末では再生準備に時間が掛かるため、その場合はもう一度タップしてもらう。
+    if(video.readyState<1){
+      try{const p=video.play();if(p?.catch)p.catch(e=>console.info('PiP映像準備中:',e));}
+      catch(e){console.info('PiP映像準備中:',e);}
+      notice('小窓映像を準備中です。少し待ってから、もう一度「小窓」を押してください。');
+      return;
+    }
+    if(video.paused){
+      const p=video.play();
+      if(p?.catch)p.catch(e=>console.info('PiP映像の再生要求:',e));
+    }
+    // 標準APIへの要求は、非同期処理で待機する前に発行する。
+    if(typeof video.requestPictureInPicture==='function'){
+      await video.requestPictureInPicture();
+      scheduleBoardRendering();
+      return;
+    }
+    // SafariのWebKit独自APIへのフォールバック。
+    if(typeof video.webkitSetPresentationMode==='function'
+        && typeof video.webkitSupportsPresentationMode==='function'
+        && video.webkitSupportsPresentationMode('picture-in-picture')){
+      video.webkitSetPresentationMode('picture-in-picture');
+      scheduleBoardRendering();
+      return;
+    }
+    throw new DOMException('この端末のブラウザはこの方式のPiPに対応していません','NotSupportedError');
+  }catch(e){
+    console.warn('PiP開始失敗',e);
+    notice('小窓を開始できませんでした。画面に表示された診断情報をご確認ください。');
+    showPipDiagnostic(pipErrorAdvice(e));
+  }
+}
 function bindEvents(){document.body.classList.toggle('viewer',role==='viewer');$('switchRole').textContent=role==='viewer'?'管理画面へ ↗':'観戦画面へ ↗';$('switchRole').href=role==='viewer'?'?role=admin':'?role=viewer';
 $('zoomIn').onclick=()=>adjustZoom(.2);$('zoomOut').onclick=()=>adjustZoom(-.2);$('pipBtn').onclick=openPiP;
 for(const radio of document.querySelectorAll('input[name="diceVisualMode"]')){
